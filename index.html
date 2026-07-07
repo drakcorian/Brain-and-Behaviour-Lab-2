@@ -1,0 +1,584 @@
+<!--
+  ============================================================================
+  NEURAL RELAY — a whole-class, no-touch neural transmission demo
+  For: Brain & Behaviour, Lab 2 (Neural Transmission)
+  ============================================================================
+
+  HOW IT WORKS
+  - Each phone shows a giant TAP button ONLY when it is that person's turn.
+  - The "signal" travels through the class one person at a time (like the
+    shoulder-squeeze chain) but privately, so nobody can watch it coming and
+    pre-empt it. Out-of-turn taps do nothing.
+  - Everyone sees a live chain of "neurons" lighting up as the pulse passes.
+  - Each person's reaction time is measured LOCALLY (screen-lights-up -> tap),
+    so the number has no network lag in it. The app reports the sum of those
+    clean reaction times as the "neural" total, plus the wall-clock total.
+
+  ============================================================================
+  ONE-TIME SETUP (about 10 minutes)
+  ============================================================================
+  1. Go to https://console.firebase.google.com -> Add project (free "Spark"
+     plan is plenty). Name it whatever.
+  2. In the left menu: Build -> Realtime Database -> Create Database.
+       - Pick a location (asia-southeast1 is closest to Perth).
+       - Start in TEST MODE. (Fine for class; see the note at the bottom.)
+  3. Project settings (gear icon) -> scroll to "Your apps" -> click the </>
+     (Web) icon -> register an app -> copy the firebaseConfig object.
+  4. Paste those values into the CONFIG block just below.
+       - IMPORTANT: make sure "databaseURL" is present. If Firebase didn't
+         give you one, it's on the Realtime Database page, looks like:
+         https://YOUR-PROJECT-default-rtdb.asia-southeast1.firebasedatabase.app
+  5. Deploy: drop this file into a GitHub repo as index.html, then repo
+     Settings -> Pages -> deploy from main branch. Your class link is the
+     Pages URL. (Or test locally first by just opening the file.)
+  ============================================================================
+-->
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Neural Relay</title>
+
+<!-- ==== PASTE YOUR FIREBASE CONFIG HERE ================================= -->
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyAKi0p8MJSEIQfLuK4Gmq8WWHOxMKXeE34",
+    authDomain: "brain-and-behaviour-lab-2.firebaseapp.com",
+    databaseURL: "https://brain-and-behaviour-lab-2-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "brain-and-behaviour-lab-2",
+  };
+</script>
+<!-- ===================================================================== -->
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+<style>
+  :root{
+    --ink:#0d1b2a;          /* deep axon navy */
+    --paper:#f3f5f9;        /* cool off-white */
+    --card:#ffffff;
+    --line:#d8dee9;
+    --muted:#5b6b7f;
+    --signal:#00b4a6;       /* synapse teal — the "active" colour */
+    --signal-deep:#008f84;
+    --fire:#ff5d3b;         /* firing pulse / your-turn */
+    --fire-deep:#e0431f;
+    --spent:#9aa7b8;        /* already-fired neuron */
+    --good:#1a9e5f;
+    --bad:#d23a2b;
+    --shadow:0 6px 22px rgba(13,27,42,.10);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--paper);color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom));
+    min-height:100%;
+  }
+  .wrap{width:100%;max-width:520px;flex:1;display:flex;flex-direction:column;gap:16px}
+  header.brand{display:flex;align-items:center;gap:10px;margin-top:4px}
+  .spark{width:26px;height:26px;flex:none}
+  header.brand h1{
+    font-size:1.05rem;letter-spacing:.14em;text-transform:uppercase;
+    font-weight:800;margin:0;
+  }
+  header.brand small{color:var(--muted);font-weight:600;letter-spacing:.02em;font-size:.72rem;display:block;margin-top:1px}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:16px;
+    box-shadow:var(--shadow);padding:20px;
+  }
+  h2{margin:0 0 12px;font-size:1.15rem;font-weight:800}
+  p.lead{margin:0 0 16px;color:var(--muted);line-height:1.5}
+  label{display:block;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 0 6px}
+  input, select{
+    width:100%;padding:14px;font-size:1.05rem;border:1.5px solid var(--line);
+    border-radius:11px;background:#fff;color:var(--ink);font-family:inherit;
+  }
+  input:focus,select:focus{outline:none;border-color:var(--signal)}
+  input.code{text-transform:uppercase;letter-spacing:.4em;text-align:center;font-weight:800;font-size:1.5rem}
+  button{
+    font-family:inherit;font-weight:800;font-size:1rem;border:none;border-radius:12px;
+    padding:15px 18px;cursor:pointer;width:100%;transition:transform .05s ease, filter .15s ease;
+  }
+  button:active{transform:translateY(1px)}
+  .btn-primary{background:var(--ink);color:#fff}
+  .btn-signal{background:var(--signal);color:#fff}
+  .btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
+  .btn-row{display:flex;gap:10px}
+  .btn-row button{width:auto;flex:1}
+  .stack{display:flex;flex-direction:column;gap:12px}
+  .hidden{display:none!important}
+  .note{font-size:.8rem;color:var(--muted);line-height:1.5}
+  .err{color:var(--bad);font-weight:600;font-size:.9rem;margin-top:8px}
+
+  /* room code display (tutor) */
+  .roomcode{font-size:2.6rem;font-weight:900;letter-spacing:.35em;text-align:center;
+    color:var(--signal-deep);padding:6px 0 2px;margin-left:.35em}
+  .joinurl{text-align:center;color:var(--muted);font-size:.82rem;word-break:break-all;margin-top:4px}
+  #qr{display:flex;justify-content:center;margin:14px 0 4px}
+  #qr img,#qr canvas{border-radius:10px}
+
+  /* participant / neuron chain */
+  .chain{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+  .neuron{
+    width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:.78rem;font-weight:800;background:#eef1f6;color:var(--muted);
+    border:2px solid var(--line);transition:all .18s ease;position:relative;
+  }
+  .neuron.spent{background:var(--spent);color:#fff;border-color:var(--spent)}
+  .neuron.active{background:var(--fire);color:#fff;border-color:var(--fire-deep);
+    box-shadow:0 0 0 4px rgba(255,93,59,.25);animation:throb .9s ease-in-out infinite}
+  @keyframes throb{50%{box-shadow:0 0 0 9px rgba(255,93,59,0)}}
+  .roster{display:flex;flex-direction:column;gap:2px;margin-top:10px;max-height:220px;overflow:auto}
+  .roster .row{display:flex;justify-content:space-between;font-size:.9rem;padding:6px 2px;border-bottom:1px solid #eef1f6}
+  .roster .row .rt{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:700}
+
+  /* the big student states */
+  .stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;min-height:52vh}
+  .waitbig{font-size:1.1rem;color:var(--muted);font-weight:600;line-height:1.5}
+  .position-badge{font-size:.8rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--signal-deep);background:rgba(0,180,166,.12);padding:6px 12px;border-radius:999px}
+  .countdown{font-size:3.2rem;font-weight:900;font-variant-numeric:tabular-nums}
+  .tapzone{
+    width:min(78vw,300px);height:min(78vw,300px);border-radius:50%;
+    background:linear-gradient(160deg,var(--fire),var(--fire-deep));color:#fff;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;
+    font-size:2rem;font-weight:900;letter-spacing:.05em;cursor:pointer;user-select:none;
+    box-shadow:0 12px 40px rgba(224,67,31,.4);animation:pop .18s ease;
+  }
+  @keyframes pop{from{transform:scale(.9)}to{transform:scale(1)}}
+  .tapzone small{font-size:.85rem;font-weight:700;opacity:.9;letter-spacing:.02em}
+  .choice-row{display:flex;gap:16px;width:min(88vw,360px)}
+  .choice-btn{flex:1;height:150px;border-radius:20px;font-size:1.4rem;background:var(--ink);color:#fff;
+    display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow)}
+  .choice-btn.flash-bad{animation:shake .3s}
+  @keyframes shake{25%{transform:translateX(-7px)}75%{transform:translateX(7px)}}
+  .prompt{font-size:1.15rem;font-weight:700;color:var(--muted)}
+  .prompt b{color:var(--ink)}
+  .youdone{font-size:1.05rem;color:var(--muted);line-height:1.6}
+  .youdone .big{font-size:2.6rem;font-weight:900;color:var(--good);display:block;font-variant-numeric:tabular-nums}
+
+  /* results */
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:4px 0 14px}
+  .stat{background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:12px;text-align:center}
+  .stat .v{font-size:1.6rem;font-weight:900;font-variant-numeric:tabular-nums}
+  .stat .k{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-top:2px}
+  .footnote{font-size:.78rem;color:var(--muted);line-height:1.5;margin-top:12px;border-top:1px dashed var(--line);padding-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="brand">
+    <svg class="spark" viewBox="0 0 24 24" fill="none" stroke="#00b4a6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+    <div>
+      <h1>Neural Relay</h1>
+      <small>Brain &amp; Behaviour · Lab 2</small>
+    </div>
+  </header>
+
+  <!-- ===================== LANDING ===================== -->
+  <section id="landing" class="card">
+    <h2>Send a signal round the room</h2>
+    <p class="lead">A no-touch version of the neural transmission chain. The pulse passes person to person — but only your own screen tells you when it's your turn.</p>
+    <div class="stack">
+      <button class="btn-primary" onclick="showTutor()">I'm the tutor — start a room</button>
+      <button class="btn-ghost" onclick="showJoin()">I'm a student — join a room</button>
+    </div>
+    <p id="cfgWarn" class="err hidden">⚠ Firebase config hasn't been filled in yet — see the setup comment at the top of this file.</p>
+  </section>
+
+  <!-- ===================== STUDENT: JOIN ===================== -->
+  <section id="join" class="card hidden">
+    <h2>Join the relay</h2>
+    <label for="roomInput">Room code</label>
+    <input id="roomInput" class="code" maxlength="4" autocapitalize="characters" autocomplete="off" placeholder="————">
+    <label for="nameInput">Your name</label>
+    <input id="nameInput" maxlength="24" autocomplete="off" placeholder="e.g. Sam">
+    <div style="height:14px"></div>
+    <button class="btn-signal" onclick="doJoin()">Join</button>
+    <p id="joinErr" class="err hidden"></p>
+    <button class="btn-ghost" style="margin-top:10px" onclick="backToLanding()">Back</button>
+  </section>
+
+  <!-- ===================== STUDENT: PLAY ===================== -->
+  <section id="play" class="card hidden" style="flex:1;display:flex;flex-direction:column">
+    <div class="stage" id="playStage"></div>
+    <div>
+      <div class="chain" id="playChain"></div>
+      <p class="note" id="playProgress" style="text-align:center;margin-top:10px"></p>
+    </div>
+  </section>
+
+  <!-- ===================== TUTOR: CONSOLE ===================== -->
+  <section id="tutor" class="card hidden">
+    <h2>Room <span id="tRoom" style="color:var(--signal-deep)"></span></h2>
+
+    <div id="tLobby">
+      <div class="roomcode" id="tCode">————</div>
+      <div id="qr"></div>
+      <div class="joinurl" id="tUrl"></div>
+
+      <label style="margin-top:18px">Round label</label>
+      <input id="roundLabel" placeholder="e.g. hand — baseline" value="hand — baseline">
+      <label>Mode</label>
+      <select id="modeSelect">
+        <option value="simple">Simple — tap as soon as it's your turn</option>
+        <option value="choice">Choice — tap the OPPOSITE side (adds a decision)</option>
+      </select>
+
+      <p class="note" style="margin:14px 0 12px">Waiting for students to join. They can also scan the code above.</p>
+      <button class="btn-signal" id="startBtn" onclick="startRelay()" disabled>Start relay (0 joined)</button>
+    </div>
+
+    <div id="tRunning" class="hidden">
+      <p class="lead" id="tRunLabel"></p>
+      <div class="chain" id="tChain"></div>
+      <p class="note" id="tRunProgress" style="text-align:center;margin-top:12px"></p>
+    </div>
+
+    <div id="tResults" class="hidden">
+      <p class="lead" id="tResLabel" style="margin-bottom:6px"></p>
+      <div class="stats">
+        <div class="stat"><div class="v" id="rNeural">—</div><div class="k">Neural total (Σ reactions)</div></div>
+        <div class="stat"><div class="v" id="rAvg">—</div><div class="k">Avg per person</div></div>
+        <div class="stat"><div class="v" id="rWall">—</div><div class="k">Wall-clock total</div></div>
+        <div class="stat"><div class="v" id="rCount">—</div><div class="k">People in chain</div></div>
+      </div>
+      <div class="roster" id="rRoster"></div>
+      <p class="footnote"><b>Talking point:</b> the neural total is the sum of clean reaction times measured on each phone. The wall-clock total is bigger — that gap is the wifi carrying the signal between phones, not anyone's nervous system.</p>
+      <div class="btn-row" style="margin-top:14px">
+        <button class="btn-signal" onclick="newRound()">New round (same class)</button>
+        <button class="btn-ghost" onclick="resetAll()">Reset all</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<audio id="beep" preload="auto"></audio>
+
+<script>
+/* ------------------------------------------------------------------ */
+/* boot + config check                                                */
+/* ------------------------------------------------------------------ */
+let db = null, ok = false;
+try {
+  if (!/PASTE_ME/.test(JSON.stringify(firebaseConfig))) {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    ok = true;
+  }
+} catch(e){ console.error(e); }
+if (!ok) document.getElementById('cfgWarn').classList.remove('hidden');
+
+/* ------------------------------------------------------------------ */
+/* tiny helpers                                                        */
+/* ------------------------------------------------------------------ */
+const $ = id => document.getElementById(id);
+const show = id => $(id).classList.remove('hidden');
+const hide = id => $(id).classList.add('hidden');
+const sections = ['landing','join','play','tutor'];
+function only(id){ sections.forEach(s=>hide(s)); show(id); }
+function backToLanding(){ only('landing'); }
+function showTutor(){ if(!ok) return; createRoom(); }
+function showJoin(){
+  if(!ok) return;
+  only('join');
+  const pre = new URLSearchParams(location.search).get('room');
+  if(pre) $('roomInput').value = pre.toUpperCase();
+}
+const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no confusable chars
+const rid = (n=4)=>Array.from({length:n},()=>LETTERS[Math.floor(Math.random()*LETTERS.length)]).join('');
+const ms = n => Math.round(n) + ' ms';
+
+/* a short click via WebAudio (works without an audio file) */
+let actx;
+function blip(){
+  try{
+    actx = actx || new (window.AudioContext||window.webkitAudioContext)();
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.frequency.value=880; o.connect(g); g.connect(actx.destination);
+    g.gain.setValueAtTime(.001,actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(.4,actx.currentTime+.01);
+    g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+.18);
+    o.start(); o.stop(actx.currentTime+.2);
+  }catch(e){}
+  if(navigator.vibrate) navigator.vibrate(120);
+}
+
+/* ================================================================== */
+/* TUTOR SIDE                                                          */
+/* ================================================================== */
+let room = null, tutorRef = null;
+
+function createRoom(){
+  room = rid();
+  tutorRef = db.ref('s/'+room);
+  tutorRef.set({
+    meta:{ state:'lobby', mode:'simple', roundLabel:'', currentTurn:0, count:0, startedAt:0, finishedAt:0 },
+    joinCounter:0
+  });
+  // auto-cleanup if the tutor closes the tab in lobby
+  tutorRef.child('meta/state').onDisconnect().remove();
+
+  only('tutor');
+  $('tRoom').textContent = room;
+  $('tCode').textContent = room;
+  show('tLobby'); hide('tRunning'); hide('tResults');
+
+  const url = location.origin + location.pathname + '?room=' + room;
+  $('tUrl').textContent = url;
+  $('qr').innerHTML='';
+  try{ new QRCode($('qr'),{text:url,width:150,height:150,colorDark:'#0d1b2a'}); }catch(e){}
+
+  // live roster -> update start button + lobby chain (count present participants)
+  tutorRef.child('meta').on('value', s=>{ tutorRender(s.val()||{}); });
+  tutorRef.child('p').on('value', s=>{
+    TP = s.val()||{};
+    const n = Object.keys(TP).length;
+    const btn=$('startBtn');
+    btn.disabled = n<2;
+    btn.textContent = n<2 ? `Start relay (${n} joined)` : `Start relay (${n} joined) →`;
+    tutorRender(lastMeta);
+  });
+}
+
+let TP={}, lastMeta={};
+function tutorRender(meta){
+  lastMeta = meta||{};
+  const st = meta.state;
+  if(st==='running'){
+    hide('tLobby'); show('tRunning'); hide('tResults');
+    $('tRunLabel').textContent = meta.roundLabel ? '“'+meta.roundLabel+'”' : 'Relay in progress';
+    renderChain($('tChain'), meta, TP);
+    const done = Math.min(meta.currentTurn, meta.count);
+    $('tRunProgress').textContent = `${done} of ${meta.count} fired`;
+  } else if(st==='done'){
+    hide('tLobby'); hide('tRunning'); show('tResults');
+    renderResults(meta, TP);
+  }
+}
+
+function startRelay(){
+  tutorRef.child('p').once('value').then(s=>{
+    const raw = s.val()||{};
+    // compact present participants into contiguous 0..k-1 (preserve join order),
+    // so any lobby drop-outs don't leave a gap that stalls the chain
+    const entries = Object.keys(raw).map(k=>({pos:+k, ...raw[k]})).sort((a,b)=>a.pos-b.pos);
+    const count = entries.length;
+    if(count<2) return;
+    const newP = {};
+    entries.forEach((e,i)=>{ newP[i] = {cid:e.cid||'', name:e.name||'', reactionMs:null, tappedAt:null}; });
+    tutorRef.child('meta/state').onDisconnect().cancel(); // don't nuke a live run
+    tutorRef.child('p').set(newP).then(()=>{
+      tutorRef.child('meta').update({
+        state:'running',
+        mode:$('modeSelect').value,
+        roundLabel:$('roundLabel').value.trim(),
+        count, currentTurn:0,
+        startedAt: firebase.database.ServerValue.TIMESTAMP,
+        finishedAt:0
+      });
+    });
+  });
+}
+
+function newRound(){
+  // keep participants, clear their taps, back to lobby with same code
+  const updates={};
+  Object.keys(TP).forEach(k=>{ updates['p/'+k+'/reactionMs']=null; updates['p/'+k+'/tappedAt']=null; });
+  tutorRef.update(updates);
+  tutorRef.child('meta').update({state:'lobby',currentTurn:0,startedAt:0,finishedAt:0});
+  show('tLobby'); hide('tRunning'); hide('tResults');
+}
+
+function resetAll(){
+  if(tutorRef) tutorRef.remove();
+  location.href = location.origin + location.pathname;
+}
+
+function renderResults(meta, P){
+  const arr = Object.keys(P).map(k=>({pos:+k,...P[k]})).sort((a,b)=>a.pos-b.pos);
+  const rts = arr.map(x=>x.reactionMs).filter(x=>typeof x==='number');
+  const sum = rts.reduce((a,b)=>a+b,0);
+  const avg = rts.length ? sum/rts.length : 0;
+  const wall = (meta.finishedAt && meta.startedAt) ? meta.finishedAt-meta.startedAt : 0;
+  $('tResLabel').textContent = meta.roundLabel ? '“'+meta.roundLabel+'” — results' : 'Results';
+  $('rNeural').textContent = ms(sum);
+  $('rAvg').textContent = ms(avg);
+  $('rWall').textContent = (wall/1000).toFixed(1)+' s';
+  $('rCount').textContent = rts.length;
+  const r=$('rRoster'); r.innerHTML='';
+  arr.forEach(x=>{
+    const row=document.createElement('div'); row.className='row';
+    row.innerHTML=`<span>${x.pos+1}. ${esc(x.name||'—')}</span><span class="rt">${typeof x.reactionMs==='number'?ms(x.reactionMs):'—'}</span>`;
+    r.appendChild(row);
+  });
+}
+
+/* ================================================================== */
+/* STUDENT SIDE                                                        */
+/* ================================================================== */
+let myRoom=null, myPos=null, myCid=null, myRef=null, meta={}, PP={};
+let shownAt=0, iAmActive=false, awaitingChoice=null;
+
+function doJoin(){
+  const code=$('roomInput').value.trim().toUpperCase();
+  const name=$('nameInput').value.trim();
+  $('joinErr').classList.add('hidden');
+  if(code.length!==4) return joinErr('Enter the 4-letter room code.');
+  if(!name) return joinErr('Enter your name.');
+
+  const ref=db.ref('s/'+code);
+  ref.child('meta').once('value').then(s=>{
+    const m=s.val();
+    if(!m) return joinErr("Can't find that room — check the code.");
+    if(m.state!=='lobby') return joinErr('That relay has already started. Ask your tutor to start a new round.');
+    // grab a stable position via a counter transaction
+    return ref.child('joinCounter').transaction(c=>(c||0)+1).then(res=>{
+      const pos=res.snapshot.val()-1;
+      myRoom=code; myPos=pos; myRef=ref; myCid=rid(8);
+      const pref=ref.child('p/'+pos);
+      pref.set({cid:myCid, name, reactionMs:null, tappedAt:null});
+      pref.onDisconnect().remove(); // drop out cleanly if they leave before start
+      subscribePlay();
+      only('play');
+    });
+  }).catch(e=>{ console.error(e); joinErr('Something went wrong joining.'); });
+}
+function joinErr(msg){ const e=$('joinErr'); e.textContent=msg; e.classList.remove('hidden'); }
+
+function subscribePlay(){
+  myRef.child('meta').on('value', s=>{ meta=s.val()||{}; renderPlay(); });
+  myRef.child('p').on('value', s=>{
+    PP=s.val()||{};
+    // re-find our own slot by client id (positions get compacted at start)
+    for(const k in PP){ if(PP[k] && PP[k].cid===myCid){ myPos=+k; break; } }
+    renderPlay();
+  });
+  // arm clean drop-out in the lobby; cancel it once the chain is live
+  myRef.child('meta/state').on('value', s=>{
+    const st=s.val();
+    if(!myRef || myPos==null) return;
+    if(st==='running') myRef.child('p/'+myPos).onDisconnect().cancel();
+    else if(st==='lobby') myRef.child('p/'+myPos).onDisconnect().remove();
+  });
+}
+
+function renderPlay(){
+  const stage=$('playStage');
+  renderChain($('playChain'), meta, PP);
+  if(meta.state==='lobby'){
+    iAmActive=false;
+    stage.innerHTML =
+      `<div class="position-badge">You're neuron #${myPos+1}</div>
+       <div class="waitbig">Locked in.<br>Waiting for your tutor to fire the first signal…</div>`;
+    $('playProgress').textContent = (meta.count||countP())+' ready';
+    return;
+  }
+  if(meta.state==='running'){
+    const turn=meta.currentTurn;
+    const done=Math.min(turn,meta.count);
+    $('playProgress').textContent = `${done} of ${meta.count} fired`;
+    if(turn===myPos){ if(!iAmActive) goActive(); }
+    else if(myHasFired()){
+      iAmActive=false;
+      const my=PP[myPos]?.reactionMs;
+      stage.innerHTML = `<div class="youdone">Signal passed on ✓<span class="big">${typeof my==='number'?ms(my):''}</span>your reaction time</div>`;
+    } else {
+      iAmActive=false;
+      const ahead = myPos - turn;
+      stage.innerHTML = `<div class="position-badge">You're neuron #${myPos+1}</div>
+        <div class="waitbig">Get ready…<br>${ahead} ${ahead===1?'person':'people'} ahead of you.</div>`;
+    }
+    return;
+  }
+  if(meta.state==='done'){
+    iAmActive=false;
+    const my=PP[myPos]?.reactionMs;
+    stage.innerHTML = `<div class="youdone">Chain complete 🎉<span class="big">${typeof my==='number'?ms(my):'—'}</span>your reaction time</div>`;
+    $('playProgress').textContent = 'Look up at the projector for the class results.';
+  }
+}
+
+function goActive(){
+  iAmActive=true;
+  blip();
+  const stage=$('playStage');
+  if(meta.mode==='choice'){
+    const side = Math.random()<0.5 ? 'LEFT':'RIGHT';
+    const answer = side==='LEFT' ? 'RIGHT':'LEFT';  // tap the OPPOSITE side
+    awaitingChoice=answer;
+    shownAt=performance.now();
+    stage.innerHTML =
+      `<div class="prompt">Arrow points <b>${side}</b> — tap the <b>opposite</b></div>
+       <div class="choice-row">
+         <div class="choice-btn" id="cL" onclick="choose('LEFT')">◀ LEFT</div>
+         <div class="choice-btn" id="cR" onclick="choose('RIGHT')">RIGHT ▶</div>
+       </div>`;
+  } else {
+    shownAt=performance.now();
+    stage.innerHTML =
+      `<div class="tapzone" onclick="fire()">TAP<small>your turn — go!</small></div>`;
+  }
+}
+
+function choose(side){
+  if(!iAmActive) return;
+  if(side!==awaitingChoice){
+    const el=$(side==='LEFT'?'cL':'cR');
+    el.classList.remove('flash-bad'); void el.offsetWidth; el.classList.add('flash-bad');
+    return; // wrong side: no advance, they must correct — this is the added processing cost
+  }
+  fire();
+}
+
+function fire(){
+  if(!iAmActive) return;
+  iAmActive=false;
+  const reaction = Math.round(performance.now()-shownAt);
+  myRef.child('p/'+myPos).update({reactionMs:reaction, tappedAt:firebase.database.ServerValue.TIMESTAMP});
+  // advance the turn atomically — only if it's genuinely mine
+  myRef.child('meta/currentTurn').transaction(cur=>{
+    if(cur===myPos) return myPos+1;
+    return; // abort
+  }).then(res=>{
+    if(res.committed && res.snapshot.val()>=meta.count){
+      myRef.child('meta').update({state:'done', finishedAt:firebase.database.ServerValue.TIMESTAMP});
+    }
+  });
+}
+
+function myHasFired(){ return PP[myPos] && typeof PP[myPos].reactionMs==='number'; }
+function countP(){ return Object.keys(PP).length; }
+
+/* ================================================================== */
+/* shared: the neuron chain visual                                    */
+/* ================================================================== */
+function renderChain(el, meta, P){
+  const n = meta.count || Object.keys(P||{}).length;
+  const turn = meta.state==='running' ? meta.currentTurn : (meta.state==='done'? n : -1);
+  el.innerHTML='';
+  for(let i=0;i<n;i++){
+    const d=document.createElement('div');
+    d.className='neuron';
+    if(meta.state==='running'){
+      if(i<turn) d.classList.add('spent');
+      else if(i===turn) d.classList.add('active');
+    } else if(meta.state==='done'){ d.classList.add('spent'); }
+    d.textContent=i+1;
+    el.appendChild(d);
+  }
+}
+
+function esc(s){ return (s+'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+
+/* deep link: ?room=CODE sends students straight to join */
+if(new URLSearchParams(location.search).get('room') && ok){ showJoin(); }
+</script>
+</body>
+</html>
