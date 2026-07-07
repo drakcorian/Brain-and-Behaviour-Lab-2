@@ -153,6 +153,13 @@
   .serial-in.flash-bad{border-color:var(--bad);animation:shake .3s}
   .serial-go{width:min(62vw,230px);margin-top:2px}
   .serial-err{color:var(--bad);font-weight:700;font-size:.9rem;min-height:1.2em}
+  .soundzone{width:min(80vw,320px);min-height:min(52vw,220px);border-radius:22px;
+    background:linear-gradient(160deg,var(--signal),var(--signal-deep));color:#fff;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;
+    font-size:3rem;font-weight:900;cursor:pointer;user-select:none;padding:22px;text-align:center;
+    box-shadow:0 12px 40px rgba(0,143,132,.35)}
+  .soundzone small{font-size:.95rem;font-weight:700;opacity:.95;line-height:1.35}
+  .soundtest{width:auto;padding:11px 20px;margin-top:4px}
   .countdown{font-size:3.2rem;font-weight:900;font-variant-numeric:tabular-nums}
   .tapzone{
     width:min(78vw,300px);height:min(78vw,300px);border-radius:50%;
@@ -182,12 +189,11 @@
 
   /* bar charts */
   .chart-title{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px}
-  .bars{display:flex;flex-direction:column;gap:7px}
-  .bar-row{display:grid;grid-template-columns:74px 1fr auto;align-items:center;gap:8px}
+  .bars{display:flex;flex-direction:column;gap:6px}
+  .bar-row{display:grid;grid-template-columns:76px 1fr auto;align-items:center;gap:8px}
   .bar-label{font-size:.78rem;font-weight:700;color:var(--ink);text-align:right;line-height:1.1}
-  .bar-track{background:#eef1f6;border-radius:7px;height:22px;overflow:hidden}
-  .bar-fill{height:100%;border-radius:7px;background:linear-gradient(90deg,var(--signal),var(--signal-deep));min-width:3px;transition:width .5s ease}
-  .bar-fill.avg{background:linear-gradient(90deg,#5b8def,#3a63c9)}
+  .bar-track{background:#eef1f6;border-radius:6px;height:20px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:6px;min-width:3px;transition:width .5s ease}
   .bar-val{font-size:.82rem;font-weight:800;font-variant-numeric:tabular-nums;color:var(--ink);min-width:52px;text-align:right}
   .bar-empty{font-size:.8rem;color:var(--muted);padding:6px 0}
   .talk{margin-top:16px;border-top:1px dashed var(--line);padding-top:14px}
@@ -268,10 +274,10 @@
       <p class="lead" id="tResLabel" style="margin-bottom:2px">Results</p>
       <p class="note" id="tResLatest" style="margin:0 0 16px"></p>
 
-      <div class="chart-title">Total signal time — Σ of everyone's reactions</div>
+      <div class="chart-title">Total Reaction Time</div>
       <div id="chartTotal" class="bars"></div>
 
-      <div class="chart-title" style="margin-top:18px">Average reaction per person</div>
+      <div class="chart-title" style="margin-top:16px">Average Reaction Time</div>
       <div id="chartAvg" class="bars"></div>
 
       <div id="talkpoints"></div>
@@ -281,6 +287,8 @@
     </div>
   </section>
 </div>
+
+<div id="credit" style="display:none;text-align:center;font-size:.72rem;color:var(--muted);padding:12px 0 6px;letter-spacing:.02em">developed by Matthew Han</div>
 
 <audio id="beep" preload="auto"></audio>
 
@@ -305,7 +313,7 @@ const $ = id => document.getElementById(id);
 const show = id => $(id).classList.remove('hidden');
 const hide = id => $(id).classList.add('hidden');
 const sections = ['landing','join','play','tutor'];
-function only(id){ sections.forEach(s=>hide(s)); show(id); }
+function only(id){ sections.forEach(s=>hide(s)); show(id); const c=$('credit'); if(c) c.style.display=(id==='join'||id==='play')?'block':'none'; }
 function backToLanding(){ only('landing'); }
 function showTutor(){ if(!ok) return; createRoom(); }
 function showJoin(){
@@ -323,6 +331,7 @@ let actx;
 function blip(){
   try{
     actx = actx || new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==='suspended') actx.resume();   // needed so iOS will actually play it
     const o=actx.createOscillator(), g=actx.createGain();
     o.frequency.value=880; o.connect(g); g.connect(actx.destination);
     g.gain.setValueAtTime(.001,actx.currentTime);
@@ -332,17 +341,19 @@ function blip(){
   }catch(e){}
   if(navigator.vibrate) navigator.vibrate(120);
 }
+/* lobby test button: plays the beep AND unlocks audio for the rest of the session */
+function testSound(){ blip(); }
 
 /* ------------------------------------------------------------------ */
 /* the five tasks                                                      */
 /* ------------------------------------------------------------------ */
 const TASKS = [
   {id:'pre',   label:'Pre-baseline',         short:'Pre',       mode:'simple', hideChain:true,  note:'',
-   hint:"Chain is HIDDEN from students — they can't see the signal coming, only their own screen firing."},
+   hint:"No warning — students only know it's their turn when their own screen fires. Nothing to watch coming."},
   {id:'base',  label:'Baseline',             short:'Base',      mode:'simple', hideChain:false, note:'',
    hint:'Standard relay. Students can watch the chain approach and anticipate their turn.'},
-  {id:'base2', label:'Baseline (revisited)', short:'Base 2',    mode:'simple', hideChain:false, note:'',
-   hint:'Identical to Baseline — a second run to show practice and how repeatable the measure is.'},
+  {id:'base2', label:'Baseline (sound)',     short:'Sound',     mode:'sound',  hideChain:true,  note:'',
+   hint:'Auditory round — the go signal is a beep. Students react by ear, eyes off the screen, and can test their sound first.'},
   {id:'rl',    label:'Right vs Left',        short:'R vs L',    mode:'choice', hideChain:false, note:'Tap the side OPPOSITE the arrow.',
    hint:'An arrow appears; students tap the OPPOSITE side. Adds a decision step.'},
   {id:'d7',    label:'Down 7s from 100',     short:'Serial 7s', mode:'serial', hideChain:false, note:'',
@@ -354,7 +365,10 @@ const taskN    = id => TASKS.findIndex(t=>t.id===id)+1;
 function buildTaskMenu(){
   const sel=$('taskSelect');
   sel.innerHTML = TASKS.map((t,i)=>`<option value="${t.id}">${i+1}. ${t.label}</option>`).join('');
-  sel.onchange = ()=>{ $('taskHint').textContent = taskById(sel.value).hint; };
+  sel.onchange = ()=>{
+    $('taskHint').textContent = taskById(sel.value).hint;
+    if(tutorRef) tutorRef.child('meta/pendingTask').set(sel.value);
+  };
   sel.onchange();
 }
 
@@ -491,8 +505,8 @@ function renderResults(meta){
   $('tResLatest').textContent = cur
     ? `Latest — ${cur.order}. ${cur.label}: ${cur.count} people, avg ${ms(cur.avg)}, total ${(cur.neuralTotal/1000).toFixed(1)} s`
     : '';
-  renderBars($('chartTotal'), hist, 'neuralTotal', 'sec', false);
-  renderBars($('chartAvg'),   hist, 'avg',        'ms',  true);
+  renderBars($('chartTotal'), hist, 'neuralTotal', 'sec');
+  renderBars($('chartAvg'),   hist, 'avg',        'ms');
   renderTalk(meta);
   const idx = TASKS.findIndex(t=>t.id===meta.taskId);
   const hasNext = idx>=0 && idx+1<TASKS.length;
@@ -506,16 +520,18 @@ function downloadAndNext(){
   else downloadXLSX();         // last task: force the spreadsheet download
 }
 
-function renderBars(el, hist, key, unit, isAvg){
+const TASK_COLORS = {1:'#00b4a6', 2:'#3b82f6', 3:'#8b5cf6', 4:'#f59e0b', 5:'#ef4444'};
+function renderBars(el, hist, key, unit){
   if(!hist.length){ el.innerHTML='<div class="bar-empty">No tasks recorded yet.</div>'; return; }
   const max = Math.max(...hist.map(h=>h[key]), 1);
   el.innerHTML='';
   hist.forEach(h=>{
     const w = Math.max(3, (h[key]/max)*100);
     const val = unit==='sec' ? (h[key]/1000).toFixed(1)+' s' : Math.round(h[key])+' ms';
+    const c = TASK_COLORS[h.order] || 'var(--signal)';
     const row = document.createElement('div'); row.className='bar-row';
     row.innerHTML = `<div class="bar-label">${h.order}. ${esc(h.short||h.label)}</div>
-      <div class="bar-track"><div class="bar-fill ${isAvg?'avg':''}" style="width:${w}%"></div></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${c}"></div></div>
       <div class="bar-val">${val}</div>`;
     el.appendChild(row);
   });
@@ -531,10 +547,10 @@ function renderTalk(meta){
   const H = HIST||{}, pts=[];
   pts.push({title:'Neural vs the clock',
     body:`These totals are the summed reaction times measured on each phone — the "neural" part. The relay felt longer in the room because the wifi adds a hop between people; that lag isn't anyone's nervous system.`});
-  if(H.pre && H.base) pts.push({title:'Anticipation',
-    body:`With the chain visible (Baseline), students reacted ${phraseDelta(H.pre.avg,H.base.avg)} than with it hidden (Pre-baseline). Seeing the signal approach lets the brain pre-load its response before the stimulus even lands.`});
-  if(H.base && H.base2) pts.push({title:'Practice & reliability',
-    body:`The second identical run came out ${phraseDelta(H.base.avg,H.base2.avg)}. A small speed-up is warm-up/practice; how close the two runs sit is a rough read on how trustworthy the measure is.`});
+  if(H.pre && H.base) pts.push({title:'Anticipation & practice',
+    body:`Baseline came out ${phraseDelta(H.pre.avg,H.base.avg)} than Pre-baseline. Two things drive that: anticipation (seeing the signal approach lets the brain pre-load its response before it lands) and a practice effect (Baseline is their second run, so they're warmed up). Because Baseline always follows Pre-baseline, the two are confounded here — worth naming to students rather than claiming it's all anticipation.`});
+  if(H.base && H.base2) pts.push({title:'Sound vs light',
+    body:`Reacting to a beep (Baseline sound) versus a visual cue (Baseline) came out ${phraseDelta(H.base.avg,H.base2.avg)}. Sound usually wins: hair-cell transduction is near-instant, while the retina runs several layers of processing before the signal even leaves the eye — so vision loses at the receptor, not the wiring.`});
   if(H.base && H.rl) pts.push({title:'Choice cost',
     body:`Adding a left/right decision made people ${phraseDelta(H.base.avg,H.rl.avg)}. That gap is the decision itself — picking between two responses is processing on top of simply detecting the signal.`});
   if(H.base && H.d7) pts.push({title:'Cognitive load',
@@ -659,9 +675,12 @@ function renderPlay(){
 
   if(meta.state==='lobby'){
     iAmActive=false;
+    const soundNext = meta.pendingTask==='base2';
     stage.innerHTML =
       `<div class="position-badge">You're neuron #${myPos+1}</div>
-       <div class="waitbig">Locked in.<br>Waiting for your tutor to fire the first signal…</div>`;
+       <div class="waitbig">Locked in.<br>Waiting for your tutor to fire the first signal…</div>
+       ${soundNext ? `<div class="dualnote">🔊 Next round uses SOUND. Unmute your phone and turn the volume up — just for this round, you can silence it again straight after. Test it below 👇</div>
+       <button class="btn-ghost soundtest" onclick="testSound()">🔊 Test sound</button>` : ''}`;
     progEl.textContent = (meta.count||countP())+' ready';
     return;
   }
@@ -669,21 +688,31 @@ function renderPlay(){
     const turn=meta.currentTurn;
     const done=Math.min(turn,meta.count);
     if(!hideChain) progEl.textContent = `${done} of ${meta.count} fired`;
+    const isSound = meta.mode==='sound';
     const noteHtml = meta.note ? `<div class="dualnote">${esc(meta.note)}</div>` : '';
-    if(turn===myPos){ if(!iAmActive) goActive(); }
-    else if(myHasFired()){
+
+    if(myHasFired()){
       iAmActive=false;
       const my=PP[myPos]?.reactionMs;
-      stage.innerHTML = `${noteHtml}<div class="youdone">Signal passed on ✓<span class="big">${typeof my==='number'?ms(my):''}</span>your reaction time</div>`;
+      stage.innerHTML = `<div class="youdone">Signal passed on ✓<span class="big">${typeof my==='number'?ms(my):''}</span>your reaction time</div>`;
+      return;
+    }
+    if(isSound){
+      // one unchanging surface for both waiting and active — the BEEP is the only go cue
+      stage.innerHTML = `<div class="dualnote">🔊 Keep your phone unmuted for this round — you can set it back to silent once it's done.</div>
+        <div class="soundzone" onclick="fire()">🔊<small>Eyes off the screen — tap the moment you hear your beep</small></div>`;
+      if(turn===myPos){ if(!iAmActive) goActive(); }   // plays beep + starts clock, no visual change
+      else iAmActive=false;
+      return;
+    }
+    if(turn===myPos){ if(!iAmActive) goActive(); return; }
+    iAmActive=false;
+    if(hideChain){
+      stage.innerHTML = `${noteHtml}<div class="waitbig">Eyes on your screen…<br>tap the instant it lights up.</div>`;
     } else {
-      iAmActive=false;
-      if(hideChain){
-        stage.innerHTML = `${noteHtml}<div class="waitbig">Eyes on your screen…<br>tap the instant it lights up.</div>`;
-      } else {
-        const ahead = myPos - turn;
-        stage.innerHTML = `${noteHtml}<div class="position-badge">You're neuron #${myPos+1}</div>
-          <div class="waitbig">Get ready…<br>${ahead} ${ahead===1?'person':'people'} ahead of you.</div>`;
-      }
+      const ahead = myPos - turn;
+      stage.innerHTML = `${noteHtml}<div class="position-badge">You're neuron #${myPos+1}</div>
+        <div class="waitbig">Get ready…<br>${ahead} ${ahead===1?'person':'people'} ahead of you.</div>`;
     }
     return;
   }
@@ -699,6 +728,10 @@ function goActive(){
   iAmActive=true;
   blip();
   const stage=$('playStage');
+  if(meta.mode==='sound'){
+    shownAt=performance.now();   // beep (from blip) is the go signal; leave the surface unchanged
+    return;
+  }
   if(meta.mode==='serial'){
     const n = meta.serial || 100;
     shownAt=performance.now();
