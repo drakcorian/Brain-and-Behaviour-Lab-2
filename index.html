@@ -159,6 +159,14 @@
     font-size:3rem;font-weight:900;cursor:pointer;user-select:none;padding:22px;text-align:center;
     box-shadow:0 12px 40px rgba(0,143,132,.35)}
   .soundzone small{font-size:.95rem;font-weight:700;opacity:.95;line-height:1.35}
+  .soundzone-full{width:100%;min-height:72vh;border-radius:22px;
+    background:linear-gradient(160deg,var(--signal),var(--signal-deep));color:#fff;
+    display:flex;align-items:center;justify-content:center;text-align:center;
+    font-size:3rem;font-weight:900;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent;
+    box-shadow:0 12px 40px rgba(0,143,132,.35)}
+  .soundzone-full .sz-inner{display:flex;flex-direction:column;align-items:center;gap:12px;
+    padding:22px;pointer-events:none}
+  .soundzone-full small{font-size:1rem;font-weight:700;opacity:.95;line-height:1.4;max-width:24ch}
   .soundtest{width:auto;padding:11px 20px;margin-top:4px}
   .countdown{font-size:3.2rem;font-weight:900;font-variant-numeric:tabular-nums}
   .tapzone{
@@ -326,23 +334,98 @@ const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no confusable chars
 const rid = (n=4)=>Array.from({length:n},()=>LETTERS[Math.floor(Math.random()*LETTERS.length)]).join('');
 const ms = n => Math.round(n) + ' ms';
 
-/* a short click via WebAudio (works without an audio file) */
+/* GO cue via WebAudio (no audio file needed).
+   Loud + sharp + broadband so it punches through cheap phone speakers and is
+   fast to DETECT: a white-noise transient (near-instant onset) layered under a
+   square tone (harmonically rich -> perceived louder than a plain sine).
+   To swap the cue, change CUE below to one of the ids in soundboard.html. */
 let actx;
-function blip(){
+const CUE = 'ding';   // 'clap' | 'click' | 'ding' | 'square' | 'noise' | 'buzz' | 'beep'
+function playCue(type){
+  type = type || CUE;
   try{
     actx = actx || new (window.AudioContext||window.webkitAudioContext)();
     if(actx.state==='suspended') actx.resume();   // needed so iOS will actually play it
-    const o=actx.createOscillator(), g=actx.createGain();
-    o.frequency.value=880; o.connect(g); g.connect(actx.destination);
-    g.gain.setValueAtTime(.001,actx.currentTime);
-    g.gain.exponentialRampToValueAtTime(.4,actx.currentTime+.01);
-    g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+.18);
-    o.start(); o.stop(actx.currentTime+.2);
+    const t = actx.currentTime;
+    const master = actx.createGain(); master.gain.value = 1.0; master.connect(actx.destination);
+
+    const noiseBurst = (dur, peak) => {
+      const buf = actx.createBuffer(1, Math.max(1, actx.sampleRate*dur), actx.sampleRate);
+      const d = buf.getChannelData(0);
+      for(let i=0;i<d.length;i++) d[i] = Math.random()*2-1;
+      const s = actx.createBufferSource(); s.buffer = buf;
+      const g = actx.createGain();
+      g.gain.setValueAtTime(.0001,t);
+      g.gain.exponentialRampToValueAtTime(peak, t+.001);   // ~1ms attack = sharp onset
+      g.gain.exponentialRampToValueAtTime(.0001, t+dur);
+      s.connect(g); g.connect(master); s.start(t); s.stop(t+dur);
+    };
+    const tone = (wave, freq, dur, peak) => {
+      const o = actx.createOscillator(); o.type=wave; o.frequency.value=freq;
+      const g = actx.createGain();
+      g.gain.setValueAtTime(.0001,t);
+      g.gain.exponentialRampToValueAtTime(peak, t+.002);
+      g.gain.exponentialRampToValueAtTime(.0001, t+dur);
+      o.connect(g); g.connect(master); o.start(t); o.stop(t+dur+.02);
+    };
+    // bright bell "ding": hard strike + inharmonic partials, now with a convolver
+    // reverb tail so it rings/echoes in a space. Strike stays dry for a crisp onset.
+    const bell = () => {
+      // synth impulse response: exponentially-decaying noise ≈ a small bright room
+      const irLen = Math.floor(actx.sampleRate * 1.8);
+      const ir = actx.createBuffer(2, irLen, actx.sampleRate);
+      for(let ch=0; ch<2; ch++){
+        const d = ir.getChannelData(ch);
+        for(let i=0;i<irLen;i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/irLen, 2.5);
+      }
+      const conv = actx.createConvolver(); conv.buffer = ir;
+      const wet = actx.createGain(); wet.gain.value = .9; conv.connect(wet); wet.connect(master);
+
+      noiseBurst(.006,.5);   // strike stays dry — keeps the onset sharp for RT
+      // longer decays = more resonant ring; partials feed BOTH the dry out and the reverb
+      [[1900,.5,.9],[3200,.42,.75],[4600,.22,.5]].forEach(([f,peak,dec])=>{
+        const o=actx.createOscillator(); o.type='sine'; o.frequency.value=f;
+        const g=actx.createGain();
+        g.gain.setValueAtTime(.0001,t);
+        g.gain.exponentialRampToValueAtTime(peak, t+.001);
+        g.gain.exponentialRampToValueAtTime(.0001, t+dec);
+        o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+dec+.02);
+      });
+    };
+
+    switch(type){
+      case 'click':  noiseBurst(.03,.9); break;
+      case 'noise':  noiseBurst(.12,.9); break;
+      case 'square': tone('square',1000,.14,.6); break;
+      case 'beep':   tone('sine',1000,.16,.7); break;
+      case 'buzz':   tone('sawtooth',220,.16,.55); break;
+      case 'ding':   bell(); break;
+      case 'clap':   // default: broadband snap + tone body — loudest/sharpest combo
+      default:       noiseBurst(.06,.95); tone('square',1000,.13,.5); break;
+    }
   }catch(e){}
   if(navigator.vibrate) navigator.vibrate(120);
 }
-/* lobby test button: plays the beep AND unlocks audio for the rest of the session */
+function blip(){ playCue(); }
+/* lobby test button: plays the cue AND unlocks audio for the rest of the session */
 function testSound(){ blip(); }
+
+/* Wake the audio hardware on the FIRST user gesture (e.g. joining the room), so the
+   first real cue is already at full volume. Without this, iOS/Chrome fade in the first
+   sound after silence — which is why the first clap was soft and the rest were fine.
+   Priming a 1-sample silent buffer wakes the output ahead of time. Runs once. */
+let audioUnlocked=false;
+function unlockAudio(){
+  if(audioUnlocked) return;
+  try{
+    actx = actx || new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==='suspended') actx.resume();
+    const b=actx.createBuffer(1,1,22050);
+    const s=actx.createBufferSource(); s.buffer=b; s.connect(actx.destination); s.start(0);
+    audioUnlocked=true;
+  }catch(e){}
+}
+window.addEventListener('pointerdown', unlockAudio);
 
 /* ------------------------------------------------------------------ */
 /* the five tasks                                                      */
@@ -698,9 +781,12 @@ function renderPlay(){
       return;
     }
     if(isSound){
-      // one unchanging surface for both waiting and active — the BEEP is the only go cue
-      stage.innerHTML = `<div class="dualnote">🔊 Keep your phone unmuted for this round — you can set it back to silent once it's done.</div>
-        <div class="soundzone" onclick="fire()">🔊<small>Eyes off the screen — tap the moment you hear your beep</small></div>`;
+      // one unchanging surface for both waiting and active — the BEEP is the only go cue.
+      // full-bleed tap target: no button to locate, so the sound round doesn't pay a
+      // "find the button" tax the visual round never pays.
+      stage.innerHTML = `<div class="soundzone-full" onclick="fire()">
+          <div class="sz-inner">🔊<small>Rest your thumb anywhere on this panel.<br>Eyes off — tap the instant you hear your cue.</small></div>
+        </div>`;
       if(turn===myPos){ if(!iAmActive) goActive(); }   // plays beep + starts clock, no visual change
       else iAmActive=false;
       return;
